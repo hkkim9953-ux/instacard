@@ -1,0 +1,37 @@
+{
+  "name": "instacard",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "clsx": "^2.1.1",
+    "file-saver": "^2.0.5",
+    "firebase": "^12.17.1",
+    "firebase-admin": "^14.2.0",
+    "html-to-image": "^1.11.13",
+    "html2canvas": "^1.4.1",
+    "jszip": "^3.10.1",
+    "lucide-react": "^1.30.0",
+    "next": "^16.2.9",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "sharp": "^0.35.3",
+    "tailwind-merge": "^3.6.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.1",
+    "@types/file-saver": "^2.0.7",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/sharp": "^0.31.1",
+    "tailwindcss": "^4.2.1",
+    "typescript": "^5.0.0"
+  }
+}
