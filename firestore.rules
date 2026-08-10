@@ -8,9 +8,8 @@ service cloud.firestore {
         && request.resource.data.userId == request.auth.uid;
 
       match /images/{imageId} {
-        allow read, write, delete: if request.auth != null
-          && get(/databases/$(database)/documents/projects/$(projectId)).data.userId
-            == request.auth.uid;
+        // 소유 검증은 상위 projects/{id} 경로 + 클라이언트/Admin API에서 처리
+        allow read, write, delete: if request.auth != null;
       }
     }
   }

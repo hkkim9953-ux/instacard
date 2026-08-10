@@ -69,20 +69,23 @@ export function DashboardClient() {
   }
 
   async function removeSelected() {
-    if (!selected.size) return;
+    const ids = [...selected];
+    if (!ids.length) return;
     if (
       !confirm(
-        `선택한 ${selected.size}개 프로젝트와 저장된 이미지를 삭제할까요?`,
+        `선택한 ${ids.length}개 프로젝트와 저장된 이미지를 삭제할까요?`,
       )
     ) {
       return;
     }
     setBusy(true);
     try {
-      await deleteProjectsClient([...selected]);
-      void load();
+      await deleteProjectsClient(ids);
+      setSelected(new Set());
+      await load();
     } catch (e) {
       alert(e instanceof Error ? e.message : "일괄 삭제 실패");
+      await load();
     } finally {
       setBusy(false);
     }

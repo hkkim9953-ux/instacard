@@ -1,6 +1,5 @@
 import {
   collection,
-  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -210,20 +209,39 @@ export async function getProjectSlideImages(projectId: string): Promise<string[]
 }
 
 export async function deleteProjectClient(id: string) {
-  const user = await requireUser();
-  const refDoc = doc(getDb(), "projects", id);
-  const snap = await getDoc(refDoc);
-  if (!snap.exists() || snap.data().userId !== user.uid) {
-    throw new Error("프로젝트를 찾을 수 없습니다.");
+  const headers = await getIdTokenHeader();
+  const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers,
+  });
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) {
+    throw new Error(data.error || "삭제 실패");
   }
-  await clearProjectImages(id);
-  await deleteDoc(refDoc);
 }
 
 export async function deleteProjectsClient(ids: string[]) {
   const unique = [...new Set(ids.filter(Boolean))];
-  for (const id of unique) {
-    await deleteProjectClient(id);
+  if (!unique.length) return;
+  const headers = await getIdTokenHeader();
+  const res = await fetch("/api/projects", {
+    method: "DELETE",
+    headers,
+    body: JSON.stringify({ ids: unique }),
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    error?: string;
+    deleted?: string[];
+    failed?: { id: string; error: string }[];
+  };
+  if (!res.ok) {
+    throw new Error(data.error || "일괄 삭제 실패");
+  }
+  if (data.failed?.length) {
+    const n = data.deleted?.length ?? 0;
+    throw new Error(
+      `${n}개 삭제됨, ${data.failed.length}개 실패: ${data.failed[0]?.error ?? ""}`,
+    );
   }
 }
 
