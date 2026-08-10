@@ -72,6 +72,13 @@ export async function DELETE(req: Request, { params }: Params) {
     return NextResponse.json({ error: "프로젝트를 찾을 수 없습니다." }, { status: 404 });
   }
 
+  const imageRefs = await ref.collection("images").listDocuments();
+  // Admin SDK batch limit 500
+  for (let i = 0; i < imageRefs.length; i += 400) {
+    const batch = db.batch();
+    imageRefs.slice(i, i + 400).forEach((r) => batch.delete(r));
+    await batch.commit();
+  }
   await ref.delete();
   return NextResponse.json({ ok: true });
 }

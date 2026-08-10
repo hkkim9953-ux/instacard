@@ -7,6 +7,10 @@ export type ProjectDoc = {
   themeId: CardThemeId | string;
   themeConfig: Record<string, unknown>;
   slides: CardSlideData[];
+  /** 저장된 카드 이미지 장수 */
+  imageCount: number;
+  /** 대시보드용 커버 썸네일 (data URL) */
+  coverThumb: string | null;
   captionText: string | null;
   hashtags: string[];
   sourceText: string | null;
@@ -23,6 +27,8 @@ export type ProjectSaveBody = {
   hashtags?: string[];
   sourceText?: string;
   bgImage?: string | null;
+  imageCount?: number;
+  coverThumb?: string | null;
 };
 
 /** @deprecated snake_case 호환용 */

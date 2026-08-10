@@ -11,6 +11,7 @@ import {
 import {
   getProjectClient,
   saveProjectClient,
+  uploadProjectSlideImages,
 } from "@/lib/firebase/projects";
 import { cn } from "@/lib/utils";
 import {
@@ -134,6 +135,40 @@ export function Studio() {
     );
   }
 
+  async function renderSlideBlobs(): Promise<Blob[]> {
+    if (!previewRef.current) return [];
+    const { toPng } = await import("html-to-image");
+    const nodes = previewRef.current.querySelectorAll<HTMLElement>(
+      "[data-slide-card]",
+    );
+    const blobs: Blob[] = [];
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i]!;
+      const dataUrl = await toPng(node, {
+        cacheBust: true,
+        pixelRatio: 1080 / Math.max(node.offsetWidth, 1),
+        backgroundColor: theme.bg,
+      });
+      const res = await fetch(dataUrl);
+      blobs.push(await res.blob());
+    }
+    return blobs;
+  }
+
+  async function makeCoverThumb(blob: Blob): Promise<string> {
+    const bmp = await createImageBitmap(blob);
+    const w = 180;
+    const h = Math.round((w * bmp.height) / bmp.width);
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("썸네일 생성 실패");
+    ctx.drawImage(bmp, 0, 0, w, h);
+    bmp.close();
+    return canvas.toDataURL("image/jpeg", 0.72);
+  }
+
   async function onSave() {
     setMsg(null);
     if (!slides.length) {
@@ -159,7 +194,40 @@ export function Studio() {
       });
       setProjectId(saved.id);
       setProjectTitle(title);
-      setInfo(`저장 완료 · ${title}`);
+
+      let imageNote = "";
+      try {
+        setInfo("카드 이미지 저장 중…");
+        const blobs = await renderSlideBlobs();
+        if (blobs.length) {
+          const coverThumb = await makeCoverThumb(blobs[0]!);
+          const imageCount = await uploadProjectSlideImages(
+            saved.userId,
+            saved.id,
+            blobs,
+          );
+          await saveProjectClient({
+            id: saved.id,
+            title,
+            themeId,
+            slides,
+            caption,
+            hashtags,
+            sourceText: raw,
+            bgImage,
+            imageCount,
+            coverThumb,
+          });
+          imageNote = ` · 이미지 ${imageCount}장`;
+        }
+      } catch (imgErr) {
+        imageNote =
+          imgErr instanceof Error
+            ? ` · 이미지 저장 실패 (${imgErr.message})`
+            : " · 이미지 저장 실패";
+      }
+
+      setInfo(`저장 완료 · ${title}${imageNote}`);
       router.replace(`/?project=${saved.id}`);
     } catch (e) {
       const message = e instanceof Error ? e.message : "저장 실패";
@@ -250,27 +318,13 @@ export function Studio() {
     setExporting(true);
     setMsg(null);
     try {
-      const { toPng } = await import("html-to-image");
       const JSZip = (await import("jszip")).default;
       const { saveAs } = await import("file-saver");
-
-      const nodes = previewRef.current.querySelectorAll<HTMLElement>(
-        "[data-slide-card]",
-      );
+      const blobs = await renderSlideBlobs();
       const zip = new JSZip();
-
-      for (let i = 0; i < nodes.length; i++) {
-        const node = nodes[i]!;
-        const dataUrl = await toPng(node, {
-          cacheBust: true,
-          pixelRatio: 1080 / Math.max(node.offsetWidth, 1),
-          backgroundColor: theme.bg,
-        });
-        const res = await fetch(dataUrl);
-        const blob = await res.blob();
+      blobs.forEach((blob, i) => {
         zip.file(`card-${String(i + 1).padStart(2, "0")}.png`, blob);
-      }
-
+      });
       const out = await zip.generateAsync({ type: "blob" });
       saveAs(out, "cardvibe-slides.zip");
     } catch (e) {
@@ -427,7 +481,7 @@ export function Studio() {
             ) : (
               <Save className="h-4 w-4" aria-hidden />
             )}
-            {saving ? "저장 중…" : projectId ? "프로젝트 업데이트" : "프로젝트 저장"}
+            {saving ? "저장 중…" : projectId ? "프로젝트·이미지 업데이트" : "프로젝트·이미지 저장"}
           </button>
 
           {slides.length > 0 ? (

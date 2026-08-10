@@ -26,3 +26,9 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
 }
+
+input[type="checkbox"] {
+  width: auto;
+  height: auto;
+  flex-shrink: 0;
+}

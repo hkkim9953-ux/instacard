@@ -115,3 +115,67 @@ export async function POST(req: Request) {
     { status: 201 },
   );
 }
+
+export async function DELETE(req: Request) {
+  const auth = await requireUid(req);
+  if ("error" in auth && auth.error) return auth.error;
+
+  const db = getAdminDb();
+  if (!db) {
+    return NextResponse.json(
+      { error: "Firebase Admin이 설정되지 않았습니다." },
+      { status: 503 },
+    );
+  }
+
+  let ids: string[] = [];
+  try {
+    const body = (await req.json()) as { ids?: unknown };
+    ids = Array.isArray(body.ids)
+      ? body.ids.filter((id): id is string => typeof id === "string" && id.length > 0)
+      : [];
+  } catch {
+    return NextResponse.json({ error: "잘못된 JSON입니다." }, { status: 400 });
+  }
+
+  ids = [...new Set(ids)];
+  if (!ids.length) {
+    return NextResponse.json({ error: "ids가 필요합니다." }, { status: 400 });
+  }
+  if (ids.length > 50) {
+    return NextResponse.json({ error: "한 번에 50개까지 삭제할 수 있습니다." }, { status: 400 });
+  }
+
+  const deleted: string[] = [];
+  const failed: { id: string; error: string }[] = [];
+
+  for (const id of ids) {
+    try {
+      const ref = db.collection("projects").doc(id);
+      const snap = await ref.get();
+      if (!snap.exists || snap.data()?.userId !== auth.uid) {
+        failed.push({ id, error: "프로젝트를 찾을 수 없습니다." });
+        continue;
+      }
+      const imageRefs = await ref.collection("images").listDocuments();
+      for (let i = 0; i < imageRefs.length; i += 400) {
+        const batch = db.batch();
+        imageRefs.slice(i, i + 400).forEach((r) => batch.delete(r));
+        await batch.commit();
+      }
+      await ref.delete();
+      deleted.push(id);
+    } catch (e) {
+      failed.push({
+        id,
+        error: e instanceof Error ? e.message : "삭제 실패",
+      });
+    }
+  }
+
+  return NextResponse.json({
+    ok: failed.length === 0,
+    deleted,
+    failed,
+  });
+}
