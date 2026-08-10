@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -9,7 +10,6 @@ import {
   setDoc,
   updateDoc,
   where,
-  writeBatch,
   addDoc,
   type Timestamp,
 } from "firebase/firestore";
@@ -138,13 +138,18 @@ export async function saveProjectClient(body: ProjectSaveBody) {
   return { id: created.id, title: payload.title, userId: user.uid };
 }
 
-async function clearProjectImages(projectId: string) {
+async function clearProjectImages(projectId: string, imageCountHint = 0) {
   const db = getDb();
-  const snap = await getDocs(collection(db, "projects", projectId, "images"));
-  if (snap.empty) return;
-  const batch = writeBatch(db);
-  snap.docs.forEach((d) => batch.delete(d.ref));
-  await batch.commit();
+  // 알려진 slide-NN 경로만 삭제 (dataUrl 전체 다운로드 방지)
+  const max = Math.min(Math.max(imageCountHint, 12), 30);
+  await Promise.all(
+    Array.from({ length: max }, (_, i) => {
+      const id = `slide-${String(i + 1).padStart(2, "0")}`;
+      return deleteDoc(doc(db, "projects", projectId, "images", id)).catch(
+        () => undefined,
+      );
+    }),
+  );
 }
 
 async function blobToJpegDataUrl(blob: Blob, maxW = 1080, quality = 0.72) {
@@ -178,7 +183,7 @@ export async function uploadProjectSlideImages(
     throw new Error("프로젝트를 찾을 수 없습니다.");
   }
 
-  await clearProjectImages(projectId);
+  await clearProjectImages(projectId, blobs.length);
 
   for (let i = 0; i < blobs.length; i++) {
     const dataUrl = await blobToJpegDataUrl(blobs[i]!);
@@ -209,38 +214,35 @@ export async function getProjectSlideImages(projectId: string): Promise<string[]
 }
 
 export async function deleteProjectClient(id: string) {
-  const headers = await getIdTokenHeader();
-  const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-    headers,
-  });
-  const data = (await res.json().catch(() => ({}))) as { error?: string };
-  if (!res.ok) {
-    throw new Error(data.error || "삭제 실패");
+  const user = await requireUser();
+  const db = getDb();
+  const refDoc = doc(db, "projects", id);
+  const snap = await getDoc(refDoc);
+  if (!snap.exists() || snap.data().userId !== user.uid) {
+    throw new Error("프로젝트를 찾을 수 없습니다.");
   }
+  const imageCount =
+    typeof snap.data().imageCount === "number" ? snap.data().imageCount : 0;
+  await clearProjectImages(id, imageCount);
+  await deleteDoc(refDoc);
 }
 
 export async function deleteProjectsClient(ids: string[]) {
   const unique = [...new Set(ids.filter(Boolean))];
-  if (!unique.length) return;
-  const headers = await getIdTokenHeader();
-  const res = await fetch("/api/projects", {
-    method: "DELETE",
-    headers,
-    body: JSON.stringify({ ids: unique }),
-  });
-  const data = (await res.json().catch(() => ({}))) as {
-    error?: string;
-    deleted?: string[];
-    failed?: { id: string; error: string }[];
-  };
-  if (!res.ok) {
-    throw new Error(data.error || "일괄 삭제 실패");
+  const failed: string[] = [];
+  for (const id of unique) {
+    try {
+      await deleteProjectClient(id);
+    } catch {
+      failed.push(id);
+    }
   }
-  if (data.failed?.length) {
-    const n = data.deleted?.length ?? 0;
+  if (failed.length) {
+    const ok = unique.length - failed.length;
     throw new Error(
-      `${n}개 삭제됨, ${data.failed.length}개 실패: ${data.failed[0]?.error ?? ""}`,
+      ok > 0
+        ? `${ok}개 삭제됨, ${failed.length}개 실패`
+        : "삭제 실패. 로그인 상태와 권한을 확인해 주세요.",
     );
   }
 }
