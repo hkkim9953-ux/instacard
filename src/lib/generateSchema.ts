@@ -65,4 +65,5 @@ JSON 스키마:
 
 type은 반드시 "COVER" | "BODY" | "CTA" 중 하나입니다.
 COVER는 첫 장에만, CTA는 마지막 장에만 사용하세요.
-bgPrompt는 카드 내용과 관련된 배경 사진용 영어 키워드입니다. (예: "personal branding laptop desk warm light")`;
+bgPrompt는 카드 내용과 관련된 배경 사진용 영어 키워드입니다. (예: "personal branding laptop desk warm light")
+사용자가 분위기(mood)·세부사항(details)을 주면 톤·카피·bgPrompt에 반영하세요.`

@@ -29,12 +29,41 @@ const SAMPLE = `개발자가 퍼스널 브랜딩을 시작해야 하는 이유
 
 오늘은 주 1회 카드뉴스 루틴만 잡아보세요.`;
 
+const MAX_GUIDE = 800;
+
+async function fileToBgDataUrl(file: File): Promise<string> {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("이미지 파일만 업로드할 수 있습니다.");
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    throw new Error("이미지는 8MB 이하여야 합니다.");
+  }
+
+  const bitmap = await createImageBitmap(file);
+  const canvas = document.createElement("canvas");
+  canvas.width = 720;
+  canvas.height = 900;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("이미지 처리에 실패했습니다.");
+
+  const scale = Math.max(720 / bitmap.width, 900 / bitmap.height);
+  const w = bitmap.width * scale;
+  const h = bitmap.height * scale;
+  ctx.drawImage(bitmap, (720 - w) / 2, (900 - h) / 2, w, h);
+  bitmap.close();
+
+  return canvas.toDataURL("image/jpeg", 0.72);
+}
+
 export function Studio() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const projectParam = searchParams.get("project");
 
   const [raw, setRaw] = useState(SAMPLE);
+  const [mood, setMood] = useState("");
+  const [details, setDetails] = useState("");
+  const [bgMode, setBgMode] = useState<"ai" | "upload">("ai");
   const [themeId, setThemeId] = useState<CardThemeId>("minimal-light");
   const [slides, setSlides] = useState<CardSlideData[]>([]);
   const [bgImage, setBgImage] = useState<string | null>(null);
@@ -52,6 +81,7 @@ export function Studio() {
   const [msg, setMsg] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
+  const bgInputRef = useRef<HTMLInputElement>(null);
 
   const theme = useMemo(
     () => CARD_THEMES.find((t) => t.id === themeId) ?? CARD_THEMES[1]!,
@@ -69,7 +99,13 @@ export function Studio() {
       { at: 8, label: "원문 분석 중…" },
       { at: 28, label: "슬라이드 구조 잡는 중…" },
       { at: 52, label: "카피 작성 중…" },
-      { at: 72, label: "배경 이미지 생성 중…" },
+      {
+        at: 72,
+        label:
+          bgMode === "upload" && bgImage
+            ? "업로드 배경 적용 중…"
+            : "배경 이미지 생성 중…",
+      },
       { at: 88, label: "마무리 중…" },
     ];
 
@@ -85,7 +121,7 @@ export function Studio() {
     }, 400);
 
     return () => window.clearInterval(id);
-  }, [generating]);
+  }, [generating, bgMode, bgImage]);
 
   useEffect(() => {
     if (!projectParam) return;
@@ -106,6 +142,11 @@ export function Studio() {
         setSlides(Array.isArray(p.slides) ? p.slides : []);
         const savedBg = p.themeConfig?.bgImage;
         setBgImage(typeof savedBg === "string" ? savedBg : null);
+        setBgMode(typeof savedBg === "string" && savedBg ? "upload" : "ai");
+        const savedMood = p.themeConfig?.mood;
+        const savedDetails = p.themeConfig?.details;
+        setMood(typeof savedMood === "string" ? savedMood : "");
+        setDetails(typeof savedDetails === "string" ? savedDetails : "");
         setCaption(p.captionText ?? "");
         setHashtags(p.hashtags ?? []);
         setRaw(p.sourceText ?? "");
@@ -156,6 +197,8 @@ export function Studio() {
         hashtags,
         sourceText: raw,
         bgImage,
+        mood,
+        details,
       });
       setProjectId(saved.id);
       setProjectTitle(title);
@@ -174,11 +217,28 @@ export function Studio() {
     }
   }
 
+  async function onPickBg(file: File | null) {
+    if (!file) return;
+    setMsg(null);
+    try {
+      const dataUrl = await fileToBgDataUrl(file);
+      setBgImage(dataUrl);
+      setBgMode("upload");
+      setInfo("배경 이미지를 적용했습니다.");
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "배경 업로드 실패");
+    }
+  }
+
   async function onGenerate() {
     setMsg(null);
     setInfo(null);
     if (!raw.trim()) {
       setMsg("원문을 입력해 주세요.");
+      return;
+    }
+    if (bgMode === "upload" && !bgImage) {
+      setMsg("수동 배경을 선택했으니 이미지를 업로드해 주세요.");
       return;
     }
 
@@ -189,7 +249,12 @@ export function Studio() {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: raw }),
+        body: JSON.stringify({
+          text: raw,
+          mood: mood.trim().slice(0, MAX_GUIDE) || undefined,
+          details: details.trim().slice(0, MAX_GUIDE) || undefined,
+          bgImage: bgMode === "upload" ? bgImage : undefined,
+        }),
       });
       const data = (await res.json()) as GenerateResult & { error?: string };
 
@@ -199,7 +264,7 @@ export function Studio() {
       if (!res.ok) {
         const local = generateSlidesLocal(raw);
         setSlides(local);
-        setBgImage(null);
+        if (bgMode !== "upload") setBgImage(null);
         setCaption(
           [local[0]?.headline ?? "카드뉴스", "", "저장해두고 다시 보세요 ✨"].join(
             "\n",
@@ -215,12 +280,15 @@ export function Studio() {
       }
 
       setSlides(toCardSlides(data));
-      setBgImage(data.bgImage || null);
+      if (bgMode === "ai") setBgImage(data.bgImage || null);
+      else if (data.bgImage) setBgImage(data.bgImage);
       setCaption(data.caption);
       setHashtags(data.hashtags ?? []);
       setInfo(
         data.title
-          ? `생성 완료 · ${data.title}${data.bgImage ? " · 배경 적용" : ""}`
+          ? `생성 완료 · ${data.title}${
+              bgMode === "upload" || data.bgImage ? " · 배경 적용" : ""
+            }`
           : "생성 완료",
       );
     } catch (e) {
@@ -228,7 +296,7 @@ export function Studio() {
       setGenStep("완료");
       const local = generateSlidesLocal(raw);
       setSlides(local);
-      setBgImage(null);
+      if (bgMode !== "upload") setBgImage(null);
       setCaption(local[0]?.headline ?? "");
       setHashtags(["#카드뉴스", "#CardVibe"]);
       setInfo(
@@ -293,7 +361,9 @@ export function Studio() {
 
         <div className="mt-6 text-left">
           <label className="block">
-            <span className="sr-only">원문 입력</span>
+            <span className="mb-1.5 block text-xs font-medium text-[var(--muted)]">
+              원문
+            </span>
             <textarea
               value={raw}
               onChange={(e) => setRaw(e.target.value)}
@@ -307,6 +377,130 @@ export function Studio() {
               placeholder="블로그 글, 노션 메모, 키워드를 붙여넣으세요"
             />
           </label>
+
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-medium text-[var(--muted)]">
+                전체 분위기
+              </span>
+              <textarea
+                value={mood}
+                onChange={(e) => setMood(e.target.value.slice(0, MAX_GUIDE))}
+                rows={3}
+                disabled={generating}
+                className={cn(
+                  "w-full resize-y rounded-2xl border border-black/10 bg-white",
+                  "px-3 py-2.5 text-sm leading-relaxed outline-none",
+                  "focus:border-black/30 disabled:opacity-60",
+                )}
+                placeholder="예: 차분하고 전문적, 따뜻한 파스텔, 강렬한 대비"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-medium text-[var(--muted)]">
+                세부사항
+              </span>
+              <textarea
+                value={details}
+                onChange={(e) => setDetails(e.target.value.slice(0, MAX_GUIDE))}
+                rows={3}
+                disabled={generating}
+                className={cn(
+                  "w-full resize-y rounded-2xl border border-black/10 bg-white",
+                  "px-3 py-2.5 text-sm leading-relaxed outline-none",
+                  "focus:border-black/30 disabled:opacity-60",
+                )}
+                placeholder="예: 존댓말, 숫자 강조, CTA는 저장 유도, 이모지 최소화"
+              />
+            </label>
+          </div>
+
+          <div className="mt-3 rounded-2xl border border-black/10 bg-white p-3">
+            <p className="text-xs font-medium text-[var(--muted)]">배경 이미지</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={generating}
+                onClick={() => setBgMode("ai")}
+                className={cn(
+                  "rounded-lg border px-3 py-1.5 text-xs font-medium transition",
+                  bgMode === "ai"
+                    ? "border-black bg-black text-white"
+                    : "border-black/10 hover:border-black/25",
+                )}
+              >
+                AI 자동 생성
+              </button>
+              <button
+                type="button"
+                disabled={generating}
+                onClick={() => setBgMode("upload")}
+                className={cn(
+                  "rounded-lg border px-3 py-1.5 text-xs font-medium transition",
+                  bgMode === "upload"
+                    ? "border-black bg-black text-white"
+                    : "border-black/10 hover:border-black/25",
+                )}
+              >
+                직접 업로드
+              </button>
+            </div>
+
+            <input
+              ref={bgInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                void onPickBg(e.target.files?.[0] ?? null);
+                e.target.value = "";
+              }}
+            />
+
+            {bgMode === "upload" || bgImage ? (
+              <div className="mt-3 flex items-center gap-3">
+                {bgImage ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={bgImage}
+                    alt="배경 미리보기"
+                    className="h-16 w-12 rounded-md object-cover border border-black/10"
+                  />
+                ) : (
+                  <div className="flex h-16 w-12 items-center justify-center rounded-md border border-dashed border-black/15 text-[10px] text-[var(--muted)]">
+                    없음
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={generating}
+                    onClick={() => bgInputRef.current?.click()}
+                    className="rounded-lg border border-black/10 px-3 py-1.5 text-xs font-medium hover:border-black/25 disabled:opacity-50"
+                  >
+                    {bgImage ? "이미지 변경" : "이미지 선택"}
+                  </button>
+                  {bgImage ? (
+                    <button
+                      type="button"
+                      disabled={generating}
+                      onClick={() => {
+                        setBgImage(null);
+                        if (bgMode === "upload") setInfo("배경을 지웠습니다. 다시 업로드하거나 AI 자동으로 전환하세요.");
+                      }}
+                      className="rounded-lg border border-black/10 px-3 py-1.5 text-xs font-medium text-red-600 hover:border-red-200 disabled:opacity-50"
+                    >
+                      제거
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-[var(--muted)]">
+                생성 시 AI가 내용에 맞는 연한 배경을 만듭니다.
+              </p>
+            )}
+          </div>
 
           {(generating || genProgress > 0) ? (
             <div className="mt-3 space-y-1.5" aria-live="polite">
@@ -391,6 +585,33 @@ export function Studio() {
                   <span className="truncate">{t.label}</span>
                 </button>
               ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-medium text-[var(--muted)]">배경 바꾸기</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={generating}
+                onClick={() => bgInputRef.current?.click()}
+                className="rounded-lg border border-black/10 bg-[var(--bg)] px-3 py-1.5 text-xs font-medium hover:border-black/25 disabled:opacity-40"
+              >
+                이미지 업로드
+              </button>
+              {bgImage ? (
+                <button
+                  type="button"
+                  disabled={generating}
+                  onClick={() => {
+                    setBgImage(null);
+                    setBgMode("ai");
+                  }}
+                  className="rounded-lg border border-black/10 px-3 py-1.5 text-xs font-medium text-red-600 disabled:opacity-40"
+                >
+                  배경 제거
+                </button>
+              ) : null}
             </div>
           </div>
 

@@ -85,6 +85,8 @@ export async function POST(req: Request) {
     themeConfig: {
       themeId: body.themeId,
       ...(body.bgImage ? { bgImage: body.bgImage } : {}),
+      ...(body.mood?.trim() ? { mood: body.mood.trim() } : {}),
+      ...(body.details?.trim() ? { details: body.details.trim() } : {}),
     },
     slides: body.slides,
     captionText: body.caption ?? null,
