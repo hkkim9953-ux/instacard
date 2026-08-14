@@ -23,6 +23,8 @@ export type ProjectSaveBody = {
   hashtags?: string[];
   sourceText?: string;
   bgImage?: string | null;
+  mood?: string | null;
+  details?: string | null;
 };
 
 /** @deprecated snake_case 호환용 */

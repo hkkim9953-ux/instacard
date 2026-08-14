@@ -6,17 +6,21 @@ import {
   type GenerateSlide,
   type GenerateSlideType,
 } from "@/lib/generateSchema";
-import { fetchSoftBgDataUrl } from "@/lib/softBg";
+import { fetchSoftBgDataUrl, normalizeBgDataUrl } from "@/lib/softBg";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
 
 const MAX_INPUT_CHARS = 12_000;
+const MAX_GUIDE_CHARS = 800;
 const MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash";
 const SLIDE_TYPES = new Set<GenerateSlideType>(["COVER", "BODY", "CTA"]);
 
 type RequestBody = {
   text?: unknown;
+  mood?: unknown;
+  details?: unknown;
+  bgImage?: unknown;
 };
 
 function badRequest(message: string, status = 400) {
@@ -83,6 +87,10 @@ function extractJsonText(text: string): string {
   return fence?.[1]?.trim() || trimmed;
 }
 
+function clipGuide(value: string | null): string {
+  return (value ?? "").trim().slice(0, MAX_GUIDE_CHARS);
+}
+
 export async function POST(req: Request) {
   let body: RequestBody;
   try {
@@ -98,6 +106,10 @@ export async function POST(req: Request) {
   if (text.length > MAX_INPUT_CHARS) {
     return badRequest(`원문은 ${MAX_INPUT_CHARS.toLocaleString("ko-KR")}자 이하여야 합니다.`);
   }
+
+  const mood = clipGuide(asString(body.mood));
+  const details = clipGuide(asString(body.details));
+  const uploadedBg = asString(body.bgImage)?.trim() || "";
 
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) {
@@ -118,9 +130,20 @@ export async function POST(req: Request) {
       },
     });
 
-    const result = await model.generateContent(
-      `다음 원문을 인스타그램 카드뉴스 JSON으로 변환해 주세요.\n\n---\n${text}\n---`,
-    );
+    const guideBlock = [
+      mood ? `전체 분위기: ${mood}` : "",
+      details ? `세부사항: ${details}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const prompt = [
+      "다음 원문을 인스타그램 카드뉴스 JSON으로 변환해 주세요.",
+      guideBlock ? `\n[사용자 지정]\n${guideBlock}\n` : "",
+      `\n---\n${text}\n---`,
+    ].join("");
+
+    const result = await model.generateContent(prompt);
     const content = result.response.text();
     if (!content?.trim()) {
       return NextResponse.json(
@@ -150,12 +173,24 @@ export async function POST(req: Request) {
       );
     }
 
-    const topic =
-      parsed.bgPrompt ||
-      [parsed.title, parsed.slides[0]?.headline, parsed.slides[0]?.badge]
+    let bgImage: string | null = null;
+    if (uploadedBg.startsWith("data:image/")) {
+      bgImage =
+        (await normalizeBgDataUrl(uploadedBg)) ||
+        (uploadedBg.length <= 900_000 ? uploadedBg : null);
+    } else {
+      const topic = [
+        parsed.bgPrompt,
+        mood,
+        details,
+        parsed.title,
+        parsed.slides[0]?.headline,
+        parsed.slides[0]?.badge,
+      ]
         .filter(Boolean)
         .join(" ");
-    const bgImage = await fetchSoftBgDataUrl(topic);
+      bgImage = await fetchSoftBgDataUrl(topic);
+    }
 
     return NextResponse.json({ ...parsed, bgImage });
   } catch (e) {

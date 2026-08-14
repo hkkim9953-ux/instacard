@@ -19,7 +19,7 @@ function topicPrompt(topic: string) {
   ].join(" ");
 }
 
-async function toSoftJpegDataUrl(input: Buffer): Promise<string | null> {
+export async function toSoftJpegDataUrl(input: Buffer): Promise<string | null> {
   try {
     const jpeg = await sharp(input)
       .resize(720, 900, { fit: "cover", position: "attention" })
@@ -30,6 +30,17 @@ async function toSoftJpegDataUrl(input: Buffer): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/** 수동 업로드 data URL → 카드용 연한 JPEG */
+export async function normalizeBgDataUrl(
+  dataUrl: string,
+): Promise<string | null> {
+  const m = dataUrl.match(/^data:image\/[\w+.+-]+;base64,([A-Za-z0-9+/=\s]+)$/);
+  if (!m?.[1]) return null;
+  const buf = Buffer.from(m[1].replace(/\s/g, ""), "base64");
+  if (buf.byteLength < 800 || buf.byteLength > 4_000_000) return null;
+  return toSoftJpegDataUrl(buf);
 }
 
 async function fromGemini(topic: string, apiKey: string): Promise<string | null> {
